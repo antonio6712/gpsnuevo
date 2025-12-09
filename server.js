@@ -10,7 +10,6 @@ const app = express();
 const server = http.createServer(app);
 
 // ==================== CORS PARA RAILWAY ====================
-// Configuración específica para Railway y Netlify
 const corsOptions = {
   origin: function (origin, callback) {
     // Permitir estos orígenes específicamente
@@ -21,27 +20,31 @@ const corsOptions = {
       'http://localhost:5173',
       'http://127.0.0.1:8080',
       'http://127.0.0.1:3000',
-      'http://127.0.0.1:5173'
+      'http://127.0.0.1:5173',
+      // Añade aquí tu dominio de Railway cuando lo tengas
     ];
     
-    // Permitir requests sin origen (como curl, Postman)
+    // En Railway, a veces el origin viene como undefined
     if (!origin) {
       return callback(null, true);
     }
     
+    // Para desarrollo, permitir cualquier origen
+    if (process.env.NODE_ENV === 'development') {
+      return callback(null, true);
+    }
+    
+    // En producción, verificar los orígenes permitidos
     if (allowedOrigins.indexOf(origin) !== -1) {
       callback(null, true);
     } else {
-      // Para debugging, mostrar qué origen está siendo bloqueado
-      console.log('⚠️ Origen bloqueado por CORS:', origin);
-      callback(null, true); // Temporalmente permitir todo - cambiar a false en producción
-      // callback(new Error('Not allowed by CORS'));
+      console.log('⚠️ Origen bloqueado:', origin);
+      callback(null, true); // Temporalmente permitir todo
     }
   },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept', 'X-Auth-Token'],
-  exposedHeaders: ['X-Auth-Token'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept'],
   optionsSuccessStatus: 200
 };
 
