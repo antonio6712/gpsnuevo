@@ -11,29 +11,16 @@ const server = http.createServer(app);
 
 // ==================== SOCKET.IO ====================
 const io = socketIo(server, {
-  cors: {  // CORREGIDO: quita la 'd' que está de más
+  cors: {
     origin: "*",
     methods: ["GET", "POST"],
     credentials: true
   }
 });
 
-io.on('connection', (socket) => {
-  console.log('🔌 Socket connected:', socket.id);
-  
-  socket.on('register-user', (data) => {
-    console.log('👤 User registered:', data?.userId);
-  });
-  
-  socket.on('disconnect', () => {
-    console.log('🔌 Socket disconnected:', socket.id);
-  });
-});
-
 // ==================== CORS CONFIGURACIÓN ====================
 const corsOptions = {
   origin: function (origin, callback) {
-    // Permitir estos orígenes específicamente
     const allowedOrigins = [
       'https://comforting-strudel-cb2b2f.netlify.app',
       'http://localhost:8080',
@@ -42,25 +29,22 @@ const corsOptions = {
       'http://127.0.0.1:8080',
       'http://127.0.0.1:3000',
       'http://127.0.0.1:5173',
-      // Añade aquí tu dominio de Railway cuando lo tengas
+      'https://gpsbackend-production.up.railway.app'
     ];
     
-    // En Railway, a veces el origin viene como undefined
     if (!origin) {
       return callback(null, true);
     }
     
-    // Para desarrollo, permitir cualquier origen
     if (process.env.NODE_ENV === 'development') {
       return callback(null, true);
     }
     
-    // En producción, verificar los orígenes permitidos
     if (allowedOrigins.indexOf(origin) !== -1) {
       callback(null, true);
     } else {
       console.log('⚠️ Origen bloqueado:', origin);
-      callback(null, true); // Temporalmente permitir todo
+      callback(null, true);
     }
   },
   credentials: true,
@@ -69,16 +53,14 @@ const corsOptions = {
   optionsSuccessStatus: 200
 };
 
-// Usar middleware de CORS
 app.use(cors(corsOptions));
+app.use(express.json());
 
 // MIDDLEWARE para logging
 app.use((req, res, next) => {
   console.log(`${new Date().toISOString()} ${req.method} ${req.url} - Origin: ${req.headers.origin || 'No origin'}`);
   next();
 });
-
-app.use(express.json());
 
 // ==================== CONEXIÓN A MONGODB ====================
 const MONGODB_URI = process.env.MONGODB_URI || '';
@@ -89,33 +71,15 @@ console.log('='.repeat(60));
 console.log('🔍 Variables de entorno:');
 console.log(`   NODE_ENV: ${process.env.NODE_ENV || 'development'}`);
 console.log(`   PORT: ${process.env.PORT || 3000}`);
-console.log(`   RAILWAY_PUBLIC_DOMAIN: ${process.env.RAILWAY_PUBLIC_DOMAIN || 'N/A'}`);
 console.log(`   MONGODB_URI: ${MONGODB_URI ? '✓ PRESENTE' : '✗ FALTANTE!'}`);
 console.log('='.repeat(60));
 
-// Health check mejorado - DEBE SER LO PRIMERO
-app.get('/health', (req, res) => {
-  const dbStatus = mongoose.connection.readyState === 1 ? 'connected' : 'disconnected';
-  const statusCode = dbStatus === 'connected' ? 200 : 503;
-  
-  res.status(statusCode).json({
-    status: dbStatus === 'connected' ? 'ok' : 'error',
-    timestamp: new Date().toISOString(),
-    service: 'gps-tracker-api',
-    version: '1.0.0',
-    database: dbStatus,
-    uptime: process.uptime()
-  });
-});
-
-// Verificar MongoDB URI
 if (!MONGODB_URI) {
   console.error('❌ ERROR: MONGODB_URI no está definida');
   console.log('⚠️ Continuando sin conexión a MongoDB...');
 } else {
   console.log('🔗 Conectando a MongoDB Atlas...');
   
-  // Añadir nombre de base de datos si no existe
   let mongoUri = MONGODB_URI;
   if (!mongoUri.includes('/?') && !mongoUri.includes('/gps_')) {
     mongoUri = mongoUri.replace(/\?/, '/gps_tracker?') || mongoUri + '/gps_tracker';
@@ -137,12 +101,12 @@ if (!MONGODB_URI) {
 
 // ==================== ESQUEMAS ====================
 const locationSchema = new mongoose.Schema({
-  userId: { type: String, required: true },
-  username: { type: String },
+  userId: { type: String, required: true, index: true },
+  username: { type: String, index: true },
   latitude: { type: Number, required: true },
   longitude: { type: Number, required: true },
   accuracy: Number,
-  timestamp: { type: Date, default: Date.now }
+  timestamp: { type: Date, default: Date.now, index: true }
 });
 
 const Location = mongoose.model('Location', locationSchema);
@@ -152,7 +116,7 @@ const userSchema = new mongoose.Schema({
   email: { type: String, required: true, unique: true, lowercase: true, trim: true },
   password: { type: String, required: true },
   role: { type: String, enum: ['user', 'admin'], default: 'user' },
-  deviceId: { type: String, unique: true, sparse: true },
+  deviceId: { type: String, unique: true, sparse: true, index: true },
   createdAt: { type: Date, default: Date.now },
   lastLogin: { type: Date }
 });
@@ -163,7 +127,22 @@ userSchema.methods.comparePassword = function(password) {
 
 const User = mongoose.model('User', userSchema);
 
-// ==================== RUTAS ====================
+// ==================== RUTAS PÚBLICAS ====================
+
+// Health check
+app.get('/health', (req, res) => {
+  const dbStatus = mongoose.connection.readyState === 1 ? 'connected' : 'disconnected';
+  const statusCode = dbStatus === 'connected' ? 200 : 503;
+  
+  res.status(statusCode).json({
+    status: dbStatus === 'connected' ? 'ok' : 'error',
+    timestamp: new Date().toISOString(),
+    service: 'gps-tracker-api',
+    version: '2.0.0',
+    database: dbStatus,
+    uptime: process.uptime()
+  });
+});
 
 // Ruta principal
 app.get('/', (req, res) => {
@@ -171,7 +150,7 @@ app.get('/', (req, res) => {
     message: '🚀 GPS Tracker API - Railway',
     status: 'running',
     timestamp: new Date().toISOString(),
-    version: '1.0.0',
+    version: '2.0.0',
     endpoints: {
       public: [
         'GET  /',
@@ -183,7 +162,9 @@ app.get('/', (req, res) => {
       protected: [
         'POST /api/location',
         'GET  /api/locations/:userId',
-        'GET  /api/admin/users'
+        'GET  /api/admin/users',
+        'GET  /api/admin/user/:userId/locations',
+        'GET  /api/admin/user/:userId/stats'
       ]
     }
   });
@@ -195,14 +176,11 @@ app.get('/api/cors-test', (req, res) => {
     success: true,
     message: '✅ CORS funcionando correctamente!',
     timestamp: new Date().toISOString(),
-    origin: req.headers.origin || 'Sin origen',
-    allowedOrigins: [
-      'https://comforting-strudel-cb2b2f.netlify.app',
-      'http://localhost:8080',
-      'http://localhost:3000'
-    ]
+    origin: req.headers.origin || 'Sin origen'
   });
 });
+
+// ==================== AUTENTICACIÓN ====================
 
 // Login
 app.post('/api/login', async (req, res) => {
@@ -218,7 +196,6 @@ app.post('/api/login', async (req, res) => {
       });
     }
     
-    // Buscar usuario
     let user = await User.findOne({ username: username.trim() });
     if (!user) {
       user = await User.findOne({ email: username.trim().toLowerCase() });
@@ -238,11 +215,9 @@ app.post('/api/login', async (req, res) => {
       });
     }
     
-    // Actualizar último login
     user.lastLogin = new Date();
     await user.save({ validateBeforeSave: false });
     
-    // Generar token
     const token = jwt.sign(
       { 
         id: user._id, 
@@ -262,7 +237,8 @@ app.post('/api/login', async (req, res) => {
         id: user._id,
         username: user.username,
         deviceId: user.deviceId,
-        role: user.role
+        role: user.role,
+        email: user.email
       },
       token
     });
@@ -290,7 +266,6 @@ app.post('/api/register', async (req, res) => {
       });
     }
     
-    // Verificar si existe
     const existingUser = await User.findOne({ 
       $or: [{ username }, { email: email.toLowerCase() }] 
     });
@@ -302,7 +277,6 @@ app.post('/api/register', async (req, res) => {
       });
     }
     
-    // Crear usuario
     const deviceId = `device_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
     const user = new User({
       username,
@@ -313,7 +287,6 @@ app.post('/api/register', async (req, res) => {
     
     await user.save();
     
-    // Generar token
     const token = jwt.sign(
       { 
         id: user._id, 
@@ -332,7 +305,8 @@ app.post('/api/register', async (req, res) => {
         id: user._id,
         username: user.username,
         deviceId: user.deviceId,
-        role: user.role
+        role: user.role,
+        email: user.email
       },
       token
     });
@@ -346,6 +320,8 @@ app.post('/api/register', async (req, res) => {
   }
 });
 
+// ==================== RUTAS DE UBICACIÓN ====================
+
 // Guardar ubicación
 app.post('/api/location', async (req, res) => {
   try {
@@ -357,12 +333,10 @@ app.post('/api/location', async (req, res) => {
       return res.status(400).json({ error: 'Datos incompletos' });
     }
     
-    // Buscar username
     let username = userId;
     const user = await User.findOne({ deviceId: userId });
     if (user) username = user.username;
     
-    // Guardar en BD
     const location = new Location({
       userId,
       username,
@@ -373,19 +347,33 @@ app.post('/api/location', async (req, res) => {
     
     await location.save();
     
-    // WebSocket
-    io.emit('locationUpdate', {
+    // WebSocket - Emitir a todos
+    const locationData = {
       userId,
       username,
       latitude,
       longitude,
       accuracy: accuracy || 0,
       timestamp: new Date()
+    };
+    
+    io.emit('locationUpdate', locationData);
+    
+    // Emitir a sala de admin
+    io.to('admin-room').emit('adminLocationUpdate', {
+      ...locationData,
+      deviceId: userId,
+      userInfo: user ? {
+        email: user.email,
+        role: user.role,
+        createdAt: user.createdAt
+      } : null
     });
     
     res.json({
       success: true,
-      message: 'Ubicación guardada'
+      message: 'Ubicación guardada',
+      locationId: location._id
     });
     
   } catch (error) {
@@ -394,29 +382,53 @@ app.post('/api/location', async (req, res) => {
   }
 });
 
-// Obtener ubicaciones
+// Obtener ubicaciones de un usuario (para app móvil)
 app.get('/api/locations/:userId', async (req, res) => {
   try {
     const { userId } = req.params;
+    const { limit = 50 } = req.query;
+    
     const locations = await Location.find({ userId })
       .sort({ timestamp: -1 })
-      .limit(50);
+      .limit(parseInt(limit));
     
     res.json(locations);
   } catch (error) {
-    res.json([]);
+    res.status(500).json([]);
   }
 });
 
-// Admin: usuarios
+// ==================== RUTAS DE ADMINISTRADOR ====================
+
+// Obtener todos los usuarios con estadísticas
 app.get('/api/admin/users', async (req, res) => {
   try {
     const users = await User.find({}, 'username email role deviceId createdAt lastLogin');
     
-    const usersWithLocations = await Promise.all(
+    const usersWithStats = await Promise.all(
       users.map(async (user) => {
+        if (!user.deviceId) {
+          return {
+            userId: 'no-device',
+            username: user.username,
+            email: user.email,
+            role: user.role,
+            locationCount: 0,
+            lastSeen: user.lastLogin || user.createdAt,
+            firstSeen: user.createdAt,
+            lastLocation: null,
+            deviceId: user.deviceId
+          };
+        }
+        
         const lastLocation = await Location.findOne({ userId: user.deviceId })
           .sort({ timestamp: -1 })
+          .limit(1);
+        
+        const locationCount = await Location.countDocuments({ userId: user.deviceId });
+        
+        const firstLocation = await Location.findOne({ userId: user.deviceId })
+          .sort({ timestamp: 1 })
           .limit(1);
         
         return {
@@ -424,19 +436,212 @@ app.get('/api/admin/users', async (req, res) => {
           username: user.username,
           email: user.email,
           role: user.role,
+          locationCount: locationCount || 0,
+          lastSeen: lastLocation ? lastLocation.timestamp : user.lastLogin || user.createdAt,
+          firstSeen: firstLocation ? firstLocation.timestamp : user.createdAt,
           lastLocation: lastLocation ? {
             latitude: lastLocation.latitude,
-            longitude: lastLocation.longitude
-          } : null
+            longitude: lastLocation.longitude,
+            accuracy: lastLocation.accuracy,
+            timestamp: lastLocation.timestamp
+          } : null,
+          deviceId: user.deviceId
         };
       })
     );
     
+    // Filtrar solo usuarios con ubicaciones para admin
+    const usersWithLocations = usersWithStats.filter(user => 
+      user.locationCount > 0 && user.userId !== 'no-device'
+    );
+    
     res.json(usersWithLocations);
   } catch (error) {
-    console.error('Admin users error:', error);
-    res.json([]);
+    console.error('❌ Admin users error:', error);
+    res.status(500).json({ 
+      success: false, 
+      error: 'Error obteniendo usuarios',
+      details: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
   }
+});
+
+// Obtener historial de ubicaciones de un usuario (PARA ADMIN)
+app.get('/api/admin/user/:userId/locations', async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const { limit = 500, startDate, endDate } = req.query;
+    
+    console.log(`📊 Historial solicitado para: ${userId}, límite: ${limit}`);
+    
+    const query = { userId };
+    
+    if (startDate) {
+      query.timestamp = { $gte: new Date(startDate) };
+    }
+    if (endDate) {
+      query.timestamp = { 
+        ...query.timestamp, 
+        $lte: new Date(endDate) 
+      };
+    }
+    
+    const locations = await Location.find(query)
+      .sort({ timestamp: 1 })
+      .limit(parseInt(limit));
+    
+    console.log(`✅ ${locations.length} ubicaciones encontradas para ${userId}`);
+    
+    const formattedLocations = locations.map(loc => ({
+      userId: loc.userId,
+      username: loc.username || 'Sin nombre',
+      latitude: loc.latitude,
+      longitude: loc.longitude,
+      accuracy: loc.accuracy || 0,
+      timestamp: loc.timestamp,
+      formattedTime: loc.timestamp.toLocaleString()
+    }));
+    
+    res.json(formattedLocations);
+  } catch (error) {
+    console.error('❌ Error obteniendo historial:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Error obteniendo historial',
+      message: error.message
+    });
+  }
+});
+
+// Obtener estadísticas de usuario
+app.get('/api/admin/user/:userId/stats', async (req, res) => {
+  try {
+    const { userId } = req.params;
+    
+    const allLocations = await Location.find({ userId })
+      .sort({ timestamp: 1 });
+    
+    if (allLocations.length === 0) {
+      return res.json({
+        success: true,
+        message: 'Usuario sin ubicaciones',
+        stats: {
+          totalLocations: 0,
+          firstLocation: null,
+          lastLocation: null,
+          dateRange: null,
+          avgAccuracy: 0
+        }
+      });
+    }
+    
+    const firstLocation = allLocations[0];
+    const lastLocation = allLocations[allLocations.length - 1];
+    const avgAccuracy = allLocations.reduce((sum, loc) => sum + (loc.accuracy || 0), 0) / allLocations.length;
+    
+    res.json({
+      success: true,
+      stats: {
+        totalLocations: allLocations.length,
+        firstLocation: {
+          latitude: firstLocation.latitude,
+          longitude: firstLocation.longitude,
+          timestamp: firstLocation.timestamp,
+          accuracy: firstLocation.accuracy
+        },
+        lastLocation: {
+          latitude: lastLocation.latitude,
+          longitude: lastLocation.longitude,
+          timestamp: lastLocation.timestamp,
+          accuracy: lastLocation.accuracy
+        },
+        dateRange: {
+          start: firstLocation.timestamp,
+          end: lastLocation.timestamp,
+          days: Math.ceil((lastLocation.timestamp - firstLocation.timestamp) / (1000 * 60 * 60 * 24))
+        },
+        avgAccuracy: avgAccuracy.toFixed(2)
+      }
+    });
+  } catch (error) {
+    console.error('❌ Error en stats:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Eliminar ubicaciones de usuario
+app.delete('/api/admin/user/:userId/locations', async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const { beforeDate } = req.query;
+    
+    const query = { userId };
+    if (beforeDate) {
+      query.timestamp = { $lt: new Date(beforeDate) };
+    }
+    
+    const result = await Location.deleteMany(query);
+    
+    res.json({
+      success: true,
+      message: `Eliminadas ${result.deletedCount} ubicaciones`,
+      deletedCount: result.deletedCount
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// ==================== SOCKET.IO EVENTOS ====================
+
+io.on('connection', (socket) => {
+  console.log('🔌 Socket connected:', socket.id);
+  
+  // Unirse a sala de admin
+  socket.on('join-admin-room', () => {
+    socket.join('admin-room');
+    console.log('👨‍💼 Admin conectado:', socket.id);
+    
+    // Notificar a todos los admin que hay un nuevo admin conectado
+    socket.to('admin-room').emit('admin-connected', { adminId: socket.id });
+  });
+  
+  // Registrar usuario
+  socket.on('register-user', (data) => {
+    console.log('👤 User registered:', data?.userId);
+    
+    // Notificar a los admin
+    io.to('admin-room').emit('user-registered', {
+      userId: data.userId,
+      username: data.username,
+      timestamp: new Date(),
+      socketId: socket.id
+    });
+  });
+  
+  // Obtener usuarios en tiempo real
+  socket.on('get-users', async () => {
+    try {
+      const users = await User.find({}, 'username deviceId lastLogin');
+      const usersWithStatus = users.map(user => ({
+        userId: user.deviceId,
+        username: user.username,
+        lastSeen: user.lastLogin,
+        isOnline: false // Podrías implementar lógica de online/offline
+      }));
+      
+      socket.emit('users-list', usersWithStatus);
+    } catch (error) {
+      console.error('Error obteniendo usuarios:', error);
+    }
+  });
+  
+  socket.on('disconnect', () => {
+    console.log('🔌 Socket disconnected:', socket.id);
+    
+    // Notificar a admin que un usuario se desconectó
+    io.to('admin-room').emit('user-disconnected', { socketId: socket.id });
+  });
 });
 
 // ==================== ERROR HANDLING ====================
@@ -445,7 +650,19 @@ app.use((req, res) => {
     success: false,
     error: 'Ruta no encontrada',
     path: req.path,
-    method: req.method
+    method: req.method,
+    availableEndpoints: [
+      '/',
+      '/health',
+      '/api/cors-test',
+      '/api/login',
+      '/api/register',
+      '/api/location',
+      '/api/locations/:userId',
+      '/api/admin/users',
+      '/api/admin/user/:userId/locations',
+      '/api/admin/user/:userId/stats'
+    ]
   });
 });
 
@@ -454,7 +671,8 @@ app.use((err, req, res, next) => {
   res.status(500).json({
     success: false,
     error: 'Error interno del servidor',
-    message: process.env.NODE_ENV === 'development' ? err.message : undefined
+    message: process.env.NODE_ENV === 'development' ? err.message : undefined,
+    timestamp: new Date().toISOString()
   });
 });
 
@@ -465,10 +683,8 @@ server.listen(PORT, '0.0.0.0', () => {
   console.log('='.repeat(60));
   console.log(`🚀 Servidor corriendo en puerto ${PORT}`);
   console.log(`🌍 Health Check: http://0.0.0.0:${PORT}/health`);
-  console.log(`🔗 Railway URL: ${process.env.RAILWAY_PUBLIC_DOMAIN || 'N/A'}`);
+  console.log(`🔗 Railway URL: https://gpsbackend-production.up.railway.app`);
   console.log(`⚡ Entorno: ${process.env.NODE_ENV || 'development'}`);
+  console.log(`📡 WebSocket: ws://0.0.0.0:${PORT}`);
   console.log('='.repeat(60));
-  
-  // Test self-connection
-  console.log('🔄 Probando conexión interna...');
 });
