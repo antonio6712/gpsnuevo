@@ -1,8 +1,11 @@
 {
   "build": {
-    "builder": "nixpacks"
+    "builder": "nixpacks",
+    "buildCommand": "npm install"
   },
   "deploy": {
-    "startCommand": "node server.js"
+    "startCommand": "node server.js",
+    "healthcheckPath": "/",
+    "restartPolicyType": "ON_FAILURE"
   }
 }
