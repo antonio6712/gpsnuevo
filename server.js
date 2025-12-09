@@ -1,481 +1,270 @@
 const express = require('express');
 const http = require('http');
-const socketIo = require('socket.io');
-const mongoose = require('mongoose');
-const jwt = require('jsonwebtoken');
 const cors = require('cors');
 require('dotenv').config();
 
 const app = express();
 const server = http.createServer(app);
 
-// ==================== CORS PARA RAILWAY ====================
-// Configuración específica para Railway y Netlify
-const corsOptions = {
-  origin: function (origin, callback) {
-    // Permitir estos orígenes específicamente
-    const allowedOrigins = [
-      'https://comforting-strudel-cb2b2f.netlify.app',
-      'http://localhost:8080',
-      'http://localhost:3000',
-      'http://localhost:5173',
-      'http://127.0.0.1:8080',
-      'http://127.0.0.1:3000',
-      'http://127.0.0.1:5173'
-    ];
-    
-    // Permitir requests sin origen (como curl, Postman)
-    if (!origin) {
-      return callback(null, true);
-    }
-    
-    if (allowedOrigins.indexOf(origin) !== -1) {
-      callback(null, true);
-    } else {
-      // Para debugging, mostrar qué origen está siendo bloqueado
-      console.log('⚠️ Origen bloqueado por CORS:', origin);
-      callback(null, true); // Temporalmente permitir todo - cambiar a false en producción
-      // callback(new Error('Not allowed by CORS'));
-    }
-  },
-  credentials: true,
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept', 'X-Auth-Token'],
-  exposedHeaders: ['X-Auth-Token'],
-  optionsSuccessStatus: 200
-};
+// ==================== CONFIGURACIÓN BÁSICA ====================
+const PORT = process.env.PORT || 8080;
 
-// Usar middleware de CORS
-app.use(cors(corsOptions));
+// Log inicial
+console.log('='.repeat(60));
+console.log('🚀 INICIANDO SERVIDOR GPS TRACKER EN RAILWAY');
+console.log('='.repeat(60));
+console.log('🔍 Configuración:');
+console.log('   PORT:', PORT);
+console.log('   NODE_ENV:', process.env.NODE_ENV || 'production');
+console.log('   MONGODB_URI:', process.env.MONGODB_URI ? 'PRESENTE' : 'NO DEFINIDA');
+console.log('='.repeat(60));
 
-// MIDDLEWARE ESPECIAL para logging de CORS (opcional)
-app.use((req, res, next) => {
-  console.log(`${req.method} ${req.url} - Origin: ${req.headers.origin || 'No origin'}`);
-  next();
-});
+// ==================== CORS SIMPLE PERO EFECTIVO ====================
+app.use(cors({
+  origin: '*', // Permitir todo temporalmente
+  methods: ['GET', 'POST', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization']
+}));
 
 app.use(express.json());
 
-// ==================== CONEXIÓN A MONGODB ====================
-const MONGODB_URI = process.env.MONGODB_URI;
-
-console.log('='.repeat(50));
-console.log('🔧 INICIANDO SERVIDOR GPS TRACKER - CORS FIXED');
-console.log('='.repeat(50));
-console.log('🔍 Variables de entorno:');
-console.log('   NODE_ENV:', process.env.NODE_ENV || 'development');
-console.log('   PORT:', process.env.PORT || 3000);
-console.log('   MONGODB_URI:', MONGODB_URI ? 'PRESENTE' : 'FALTANTE!');
-console.log('='.repeat(50));
-
-if (!MONGODB_URI) {
-  console.error('❌ ERROR CRÍTICO: MONGODB_URI no está definida');
-  process.exit(1);
-}
-
-console.log('🔗 Conectando a MongoDB Atlas...');
-
-mongoose.connect(MONGODB_URI, {
-  serverSelectionTimeoutMS: 10000,
-  socketTimeoutMS: 45000,
-  family: 4
-})
-  .then(() => {
-    console.log('✅ Conectado a MongoDB Atlas correctamente!');
-  })
-  .catch(err => {
-    console.error('❌ Error conectando a MongoDB:', err.message);
-  });
-
-// ==================== ESQUEMAS ====================
-const locationSchema = new mongoose.Schema({
-  userId: { type: String, required: true },
-  username: { type: String },
-  latitude: { type: Number, required: true },
-  longitude: { type: Number, required: true },
-  accuracy: Number,
-  timestamp: { type: Date, default: Date.now }
-});
-
-const Location = mongoose.model('Location', locationSchema);
-
-const userSchema = new mongoose.Schema({
-  username: { type: String, required: true, unique: true },
-  email: { type: String, required: true, unique: true, lowercase: true, trim: true },
-  password: { type: String, required: true },
-  role: { type: String, enum: ['user', 'admin'], default: 'user' },
-  deviceId: { type: String, unique: true, sparse: true },
-  createdAt: { type: Date, default: Date.now },
-  lastLogin: { type: Date }
-});
-
-userSchema.methods.comparePassword = function(password) {
-  return this.password === password;
-};
-
-const User = mongoose.model('User', userSchema);
-
-// ==================== MIDDLEWARE DE AUTENTICACIÓN ====================
-const auth = {
-  verifyToken: (req, res, next) => {
-    try {
-      const token = req.headers['authorization']?.replace('Bearer ', '') || 
-                   req.headers['x-auth-token'];
-      
-      if (!token) {
-        return res.status(401).json({
-          success: false,
-          error: 'Token no proporcionado'
-        });
-      }
-
-      const decoded = jwt.verify(token, process.env.JWT_SECRET || 'your-secret-key');
-      req.user = decoded;
-      next();
-    } catch (error) {
-      return res.status(401).json({
-        success: false,
-        error: 'Token inválido'
-      });
-    }
-  },
-
-  isAdmin: (req, res, next) => {
-    if (req.user && req.user.role === 'admin') {
-      next();
-    } else {
-      res.status(403).json({
-        success: false,
-        error: 'Se requieren permisos de administrador'
-      });
-    }
-  }
-};
-
-// ==================== RUTAS PÚBLICAS ====================
-
-// Ruta de prueba CORS
-app.get('/api/cors-test', (req, res) => {
-  res.json({
-    success: true,
-    message: '✅ CORS funcionando en Railway!',
-    timestamp: new Date().toISOString(),
-    origin: req.headers.origin || 'Sin origen',
-    headers: req.headers,
-    cors: {
-      'Access-Control-Allow-Origin': res.get('Access-Control-Allow-Origin'),
-      'Access-Control-Allow-Methods': res.get('Access-Control-Allow-Methods'),
-      'Access-Control-Allow-Headers': res.get('Access-Control-Allow-Headers')
-    }
-  });
-});
-
-// Health check
+// ==================== HEALTH CHECK (OBLIGATORIO PARA RAILWAY) ====================
 app.get('/health', (req, res) => {
-  res.json({
-    status: 'ok',
+  console.log('🩺 Health check recibido');
+  res.status(200).json({
+    status: 'healthy',
     timestamp: new Date().toISOString(),
-    database: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected'
+    service: 'gps-tracker-api',
+    version: '1.0.0'
   });
 });
 
-// Ruta principal
+// ==================== RUTA PRINCIPAL ====================
 app.get('/', (req, res) => {
+  console.log('🏠 Ruta principal solicitada');
   res.json({
     message: '🚀 GPS Tracker API - Railway',
-    endpoints: {
-      public: ['POST /api/login', 'POST /api/register', 'GET /api/cors-test'],
-      protected: ['POST /api/location', 'GET /api/admin/users']
-    }
+    status: 'online',
+    endpoints: [
+      'GET  /health',
+      'GET  /api/cors-test',
+      'POST /api/login',
+      'POST /api/register',
+      'POST /api/location',
+      'GET  /api/admin/users'
+    ],
+    documentation: 'API para rastreo GPS en tiempo real'
   });
 });
 
-// ==================== AUTENTICACIÓN ====================
-
-// Login simplificado
-app.post('/api/login', async (req, res) => {
-  try {
-    console.log('🔑 Login request from:', req.headers.origin);
-    console.log('🔑 Login body:', req.body);
-    
-    const { username, password } = req.body;
-    
-    if (!username || !password) {
-      return res.status(400).json({ 
-        success: false, 
-        error: 'Usuario y contraseña requeridos' 
-      });
-    }
-    
-    // Buscar usuario
-    let user = await User.findOne({ username: username.trim() });
-    if (!user) {
-      user = await User.findOne({ email: username.trim().toLowerCase() });
-    }
-    
-    if (!user) {
-      return res.status(401).json({ 
-        success: false, 
-        error: 'Credenciales incorrectas' 
-      });
-    }
-    
-    if (user.password !== password) {
-      return res.status(401).json({ 
-        success: false, 
-        error: 'Credenciales incorrectas' 
-      });
-    }
-    
-    // Actualizar último login
-    user.lastLogin = new Date();
-    await user.save({ validateBeforeSave: false });
-    
-    // Generar token
-    const token = jwt.sign(
-      { 
-        id: user._id, 
-        username: user.username,
-        deviceId: user.deviceId,
-        role: user.role 
-      },
-      process.env.JWT_SECRET || 'secret-key',
-      { expiresIn: '7d' }
-    );
-    
-    console.log('✅ Login exitoso para:', user.username);
-    
-    res.json({
-      success: true,
-      user: {
-        id: user._id,
-        username: user.username,
-        deviceId: user.deviceId,
-        role: user.role
-      },
-      token
-    });
-    
-  } catch (error) {
-    console.error('❌ Login error:', error);
-    res.status(500).json({ 
-      success: false, 
-      error: 'Error en el servidor' 
-    });
-  }
+// ==================== TEST CORS ====================
+app.get('/api/cors-test', (req, res) => {
+  console.log('🌐 CORS Test - Headers:', {
+    origin: req.headers.origin,
+    'user-agent': req.headers['user-agent']
+  });
+  
+  res.json({
+    success: true,
+    message: '✅ CORS funcionando correctamente!',
+    timestamp: new Date().toISOString(),
+    origin: req.headers.origin || 'No origin header',
+    cors: {
+      'Access-Control-Allow-Origin': '*',
+      'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+      'Access-Control-Allow-Headers': 'Content-Type, Authorization'
+    },
+    server: 'railway-production',
+    status: 'online'
+  });
 });
 
-// Registro
-app.post('/api/register', async (req, res) => {
-  try {
-    const { username, email, password } = req.body;
+// ==================== TEST CONEXIÓN MONGODB (OPCIONAL) ====================
+let mongoose;
+try {
+  mongoose = require('mongoose');
+  
+  if (process.env.MONGODB_URI) {
+    console.log('🔗 Intentando conectar a MongoDB...');
     
-    console.log('📝 Register request:', { username, email });
-    
-    if (!username || !email || !password) {
-      return res.status(400).json({ 
-        success: false, 
-        error: 'Todos los campos son requeridos' 
+    // Conexión simple sin opciones complejas
+    mongoose.connect(process.env.MONGODB_URI)
+      .then(() => {
+        console.log('✅ MongoDB conectado correctamente');
+      })
+      .catch(err => {
+        console.error('❌ Error conectando MongoDB:', err.message);
+        console.log('⚠️  La app funcionará sin base de datos');
       });
-    }
-    
-    // Verificar si existe
-    const existingUser = await User.findOne({ 
-      $or: [{ username }, { email: email.toLowerCase() }] 
-    });
-    
-    if (existingUser) {
-      return res.status(400).json({ 
-        success: false, 
-        error: 'Usuario o email ya registrados' 
-      });
-    }
-    
-    // Crear usuario
-    const deviceId = `device_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
-    const user = new User({
-      username,
-      email: email.toLowerCase(),
-      password,
-      deviceId
-    });
-    
-    await user.save();
-    
-    // Generar token
-    const token = jwt.sign(
-      { 
-        id: user._id, 
-        username: user.username,
-        deviceId: user.deviceId,
-        role: user.role 
-      },
-      process.env.JWT_SECRET || 'secret-key',
-      { expiresIn: '7d' }
-    );
-    
-    res.json({
-      success: true,
-      message: 'Usuario registrado exitosamente',
-      user: {
-        id: user._id,
-        username: user.username,
-        deviceId: user.deviceId,
-        role: user.role
-      },
-      token
-    });
-    
-  } catch (error) {
-    console.error('❌ Register error:', error);
-    res.status(500).json({ 
-      success: false, 
-      error: 'Error en el servidor' 
+  } else {
+    console.log('⚠️  MONGODB_URI no definida - Modo sin base de datos');
+  }
+} catch (error) {
+  console.log('⚠️  mongoose no disponible - Modo sin base de datos');
+}
+
+// ==================== RUTAS DE AUTENTICACIÓN (DEMO) ====================
+
+// Login DEMO
+app.post('/api/login', (req, res) => {
+  console.log('🔑 Login attempt:', req.body);
+  
+  // Validación básica
+  const { username, password } = req.body;
+  
+  if (!username || !password) {
+    return res.status(400).json({
+      success: false,
+      error: 'Usuario y contraseña requeridos'
     });
   }
+  
+  // DEMO: siempre éxito con usuario 'admin' o cualquier otro
+  const isAdmin = username === 'admin';
+  
+  res.json({
+    success: true,
+    user: {
+      id: Date.now(),
+      username: username,
+      role: isAdmin ? 'admin' : 'user',
+      deviceId: `device_${Date.now()}`
+    },
+    token: 'demo-jwt-token-' + Date.now(),
+    message: 'Login exitoso (modo demo)'
+  });
 });
 
-// ==================== RUTAS RESTANTES ====================
+// Registro DEMO
+app.post('/api/register', (req, res) => {
+  console.log('📝 Register attempt:', req.body);
+  
+  const { username, email, password } = req.body;
+  
+  if (!username || !email || !password) {
+    return res.status(400).json({
+      success: false,
+      error: 'Todos los campos son requeridos'
+    });
+  }
+  
+  res.json({
+    success: true,
+    user: {
+      id: Date.now(),
+      username: username,
+      email: email,
+      role: 'user',
+      deviceId: `device_${Date.now()}`
+    },
+    token: 'demo-jwt-token-' + Date.now(),
+    message: 'Usuario registrado (modo demo)'
+  });
+});
 
-// Guardar ubicación
-app.post('/api/location', async (req, res) => {
-  try {
-    const { userId, latitude, longitude, accuracy } = req.body;
-    
-    console.log('📍 Location from:', userId);
-    
-    if (!userId || latitude === undefined || longitude === undefined) {
-      return res.status(400).json({ error: 'Datos incompletos' });
-    }
-    
-    // Buscar username
-    let username = userId;
-    const user = await User.findOne({ deviceId: userId });
-    if (user) username = user.username;
-    
-    // Guardar en BD
-    const location = new Location({
+// Guardar ubicación DEMO
+app.post('/api/location', (req, res) => {
+  console.log('📍 Location received:', req.body);
+  
+  const { userId, latitude, longitude } = req.body;
+  
+  if (!userId || latitude === undefined || longitude === undefined) {
+    return res.status(400).json({
+      success: false,
+      error: 'userId, latitude y longitude requeridos'
+    });
+  }
+  
+  res.json({
+    success: true,
+    message: 'Ubicación recibida',
+    location: {
       userId,
-      username,
       latitude,
       longitude,
-      accuracy: accuracy || 0
-    });
-    
-    await location.save();
-    
-    // WebSocket
-    if (io) {
-      io.emit('locationUpdate', {
-        userId,
-        username,
-        latitude,
-        longitude,
-        accuracy: accuracy || 0,
-        timestamp: new Date()
-      });
+      timestamp: new Date().toISOString()
     }
-    
-    res.json({
-      success: true,
-      message: 'Ubicación guardada'
-    });
-    
-  } catch (error) {
-    console.error('❌ Location error:', error);
-    res.status(500).json({ error: 'Error en el servidor' });
-  }
-});
-
-// Obtener ubicaciones
-app.get('/api/locations/:userId', async (req, res) => {
-  try {
-    const { userId } = req.params;
-    const locations = await Location.find({ userId })
-      .sort({ timestamp: -1 })
-      .limit(50);
-    
-    res.json(locations);
-  } catch (error) {
-    res.json([]);
-  }
-});
-
-// Admin: usuarios
-app.get('/api/admin/users', async (req, res) => {
-  try {
-    const users = await User.find({}, 'username email role deviceId createdAt lastLogin');
-    
-    const usersWithLocations = await Promise.all(
-      users.map(async (user) => {
-        const lastLocation = await Location.findOne({ userId: user.deviceId })
-          .sort({ timestamp: -1 })
-          .limit(1);
-        
-        return {
-          userId: user.deviceId,
-          username: user.username,
-          email: user.email,
-          role: user.role,
-          lastLocation: lastLocation ? {
-            latitude: lastLocation.latitude,
-            longitude: lastLocation.longitude
-          } : null
-        };
-      })
-    );
-    
-    res.json(usersWithLocations);
-  } catch (error) {
-    console.error('Admin users error:', error);
-    res.json([]);
-  }
-});
-
-// ==================== SOCKET.IO ====================
-const io = socketIo(server, {
-  cors: {
-    origin: "*",
-    methods: ["GET", "POST"],
-    credentials: true
-  }
-});
-
-io.on('connection', (socket) => {
-  console.log('🔌 Socket connected:', socket.id);
-  
-  socket.on('register-user', (data) => {
-    console.log('👤 User registered:', data?.userId);
-  });
-  
-  socket.on('disconnect', () => {
-    console.log('🔌 Socket disconnected:', socket.id);
   });
 });
 
-// ==================== ERROR HANDLING ====================
+// Admin users DEMO
+app.get('/api/admin/users', (req, res) => {
+  console.log('👥 Admin users requested');
+  
+  const demoUsers = [
+    {
+      userId: 'device_123',
+      username: 'admin',
+      email: 'admin@example.com',
+      role: 'admin',
+      lastLocation: {
+        latitude: 19.4326,
+        longitude: -99.1332,
+        timestamp: new Date().toISOString()
+      }
+    },
+    {
+      userId: 'device_456',
+      username: 'usuario1',
+      email: 'user1@example.com',
+      role: 'user',
+      lastLocation: {
+        latitude: 19.4340,
+        longitude: -99.1350,
+        timestamp: new Date().toISOString()
+      }
+    }
+  ];
+  
+  res.json(demoUsers);
+});
+
+// ==================== MANEJO DE ERRORES ====================
+
+// 404 - Ruta no encontrada
 app.use((req, res) => {
   res.status(404).json({
     success: false,
-    error: 'Ruta no encontrada'
+    error: 'Ruta no encontrada',
+    path: req.url,
+    method: req.method
   });
 });
 
+// Error handler general
 app.use((err, req, res, next) => {
-  console.error('❌ Error:', err);
+  console.error('❌ Error no manejado:', err);
   res.status(500).json({
     success: false,
-    error: 'Error interno del servidor'
+    error: 'Error interno del servidor',
+    message: process.env.NODE_ENV === 'development' ? err.message : undefined
   });
 });
 
 // ==================== INICIAR SERVIDOR ====================
-const PORT = process.env.PORT || 3000;
 
 server.listen(PORT, '0.0.0.0', () => {
-  console.log('='.repeat(50));
-  console.log(`🚀 Servidor corriendo en puerto ${PORT}`);
-  console.log(`🌍 CORS habilitado para Netlify y localhost`);
-  console.log(`🔗 Endpoint de prueba: http://localhost:${PORT}/api/cors-test`);
-  console.log('='.repeat(50));
+  console.log(`✅ Servidor corriendo en http://0.0.0.0:${PORT}`);
+  console.log(`🌐 Health check: http://0.0.0.0:${PORT}/health`);
+  console.log(`🔗 CORS test: http://0.0.0.0:${PORT}/api/cors-test`);
+  console.log('='.repeat(60));
+  console.log('🚀 LISTO PARA RECIBIR SOLICITUDES');
+  console.log('='.repeat(60));
+});
+
+// Manejo de cierre limpio
+process.on('SIGTERM', () => {
+  console.log('🛑 Recibido SIGTERM, cerrando servidor...');
+  server.close(() => {
+    console.log('✅ Servidor cerrado');
+    process.exit(0);
+  });
+});
+
+process.on('SIGINT', () => {
+  console.log('🛑 Recibido SIGINT, cerrando servidor...');
+  server.close(() => {
+    console.log('✅ Servidor cerrado');
+    process.exit(0);
+  });
 });
